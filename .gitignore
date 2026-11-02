@@ -1,0 +1,11 @@
+/tools/bin/
+/tools/downloads/
+/dist/
+/.lune/
+*.rbxl
+*.rbxlx
+*.rbxmx
+*.rbxm
+*.log
+*.tmp
+.DS_Store
