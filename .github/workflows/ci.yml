@@ -1,0 +1,41 @@
+name: Check and build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned tools with archive verification
+        run: python3 scripts/install_tools.py
+      - name: Check project mappings
+        run: python3 scripts/check_project.py
+      - name: Check formatting
+        run: tools/bin/stylua --check src tests scripts
+      - name: Compile Luau and run portable and static scene tests
+        run: tools/bin/lune run scripts/test.luau
+      - name: Build three Places
+        run: |
+          mkdir -p dist
+          tools/bin/rojo build default.project.json -o dist/FORTIS-Preview.rbxlx
+          tools/bin/rojo build hub.project.json -o dist/FORTIS-Hub.rbxlx
+          tools/bin/rojo build dungeon.project.json -o dist/FORTIS-Dungeon.rbxlx
+      - name: Verify emitted Place structure
+        run: python3 scripts/check_project.py --built
+      - name: Package source and builds
+        run: python3 scripts/package.py
+      - name: Upload downloadable Places and source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: FORTIS-LABYRINTH-stage1
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30

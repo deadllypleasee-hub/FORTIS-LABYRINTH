@@ -1,7 +1,10 @@
 /tools/bin/
 /tools/downloads/
+/tools/*.luau
 /dist/
 /.lune/
+__pycache__/
+*.pyc
 *.rbxl
 *.rbxlx
 *.rbxmx
