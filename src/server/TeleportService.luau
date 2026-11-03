@@ -5,6 +5,7 @@ local MemoryStoreService = game:GetService("MemoryStoreService")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Config = require(ReplicatedStorage.Shared.Config)
+local RunTicket = require(ReplicatedStorage.Shared.RunTicket)
 local Teleports = {}
 local tickets = MemoryStoreService:GetHashMap("FortisRunTickets_v1")
 
@@ -12,15 +13,15 @@ function Teleports.toDungeon(player, seed)
 	if Config.HubPlaceId <= 0 or Config.DungeonPlaceId <= 0 then
 		return false, "В Config ещё не заданы ID двух Places."
 	end
+	local runId = HttpService:GenerateGUID(false)
 	local ok, err = pcall(function()
 		local accessCode, privateServerId = RobloxTeleportService:ReserveServerAsync(Config.DungeonPlaceId)
-		local runId = HttpService:GenerateGUID(false)
 		tickets:SetAsync(runId, {
 			userId = player.UserId,
 			seed = seed,
 			privateServerId = privateServerId,
 			issuedAt = os.time(),
-		}, 180)
+		}, RunTicket.Lifetime)
 		local options = Instance.new("TeleportOptions")
 		options.ReservedServerAccessCode = accessCode
 		options:SetTeleportData({ runId = runId })
@@ -28,6 +29,9 @@ function Teleports.toDungeon(player, seed)
 	end)
 	if not ok then
 		warn("[FORTIS] Dungeon teleport failed:", err)
+		pcall(function()
+			tickets:RemoveAsync(runId)
+		end)
 	end
 	return ok, if ok then nil else "Переход недоступен. Попробуйте ещё раз."
 end
@@ -44,22 +48,14 @@ function Teleports.admit(player)
 	if type(runId) ~= "string" or #runId ~= 36 then
 		return nil
 	end
+	-- A unique claim distinguishes callback retries from another admission attempt.
+	local claimId = HttpService:GenerateGUID(false)
 	local ok, record = pcall(function()
 		return tickets:UpdateAsync(runId, function(ticket)
-			if not ticket or ticket.userId ~= player.UserId or ticket.privateServerId ~= game.PrivateServerId then
-				return nil
-			end
-			if os.time() - ticket.issuedAt > 180 then
-				return nil
-			end
-			if ticket.claimedBy and ticket.claimedBy ~= game.JobId then
-				return nil
-			end
-			ticket.claimedBy = game.JobId
-			return ticket
-		end, 180)
+			return RunTicket.claim(ticket, player.UserId, game.PrivateServerId, game.JobId, claimId, os.time())
+		end, RunTicket.Lifetime)
 	end)
-	if ok and record and record.claimedBy == game.JobId then
+	if ok and record and record.claimId == claimId and record.claimedBy == game.JobId then
 		return { id = runId, seed = record.seed }
 	end
 	return nil

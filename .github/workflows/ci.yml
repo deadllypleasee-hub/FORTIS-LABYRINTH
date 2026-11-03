@@ -4,6 +4,15 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      hub_place_id:
+        description: "HUB Place ID (optional; provide both IDs for a configured build)"
+        required: false
+        type: string
+      dungeon_place_id:
+        description: "Dungeon Place ID in the same Experience"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -16,6 +25,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install pinned tools with archive verification
         run: python3 scripts/install_tools.py
+      - name: Test phone build configuration
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Apply optional Place IDs to build source
+        env:
+          FORTIS_HUB_PLACE_ID: ${{ inputs.hub_place_id }}
+          FORTIS_DUNGEON_PLACE_ID: ${{ inputs.dungeon_place_id }}
+        run: python3 scripts/configure_places.py
       - name: Check project mappings
         run: python3 scripts/check_project.py
       - name: Check formatting

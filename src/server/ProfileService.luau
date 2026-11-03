@@ -11,9 +11,12 @@ local ProfileService = {}
 ProfileService.__index = ProfileService
 
 function ProfileService.new()
-	local persistent = Config.EnablePersistence and not RunService:IsStudio()
+	local persistent = Config.EnablePersistence
+		and not RunService:IsStudio()
+		and ReplicatedStorage.PlaceKind.Value ~= "Preview"
 	local self = setmetatable({
 		entries = {},
+		locks = {},
 		persistent = persistent,
 		store = if persistent then DataStoreService:GetDataStore("FortisProfiles_v1") else nil,
 		session = game.JobId .. ":" .. HttpService:GenerateGUID(false),
@@ -35,23 +38,64 @@ function ProfileService.new()
 	return self
 end
 
+-- Serialize operations across entry replacement as well as within one entry.
+-- A load waiting for release must acquire fresh data, never the released snapshot.
+function ProfileService:_locked(player, callback)
+	local deadline = os.clock() + 15
+	while self.locks[player] and os.clock() < deadline do
+		task.wait(0.1)
+	end
+	if self.locks[player] then
+		return nil
+	end
+	self.locks[player] = true
+	local ok, result = pcall(callback)
+	self.locks[player] = nil
+	if not ok then
+		local entry = self.entries[player]
+		if entry then
+			entry.unavailable = true
+			entry.releasing = false
+		end
+		warn("[FORTIS] Profile operation failed for user", player.UserId, result)
+		return nil
+	end
+	return result
+end
+
 function ProfileService:load(player)
+	return self:_locked(player, function()
+		return self:_load(player)
+	end)
+end
+
+function ProfileService:_load(player)
+	if self.closed then
+		return nil
+	end
 	if self.entries[player] then
 		return self.entries[player].data
 	end
 	if not self.persistent then
 		local data = Rules.new()
-		self.entries[player] = { data = data, busy = false }
+		self.entries[player] = { data = data }
 		return data
 	end
 	for attempt = 1, 4 do
+		if self.closed then
+			return nil
+		end
 		local ok, record = pcall(function()
 			return self.store:UpdateAsync("u:" .. player.UserId, function(old)
 				return Lease.acquire(old, self.session, os.time())
 			end)
 		end)
 		if ok and record and record.lock and record.lock.session == self.session then
-			self.entries[player] = { data = record.data, busy = false }
+			self.entries[player] = { data = record.data }
+			if self.closed then
+				self:_save(player, true)
+				return nil
+			end
 			return record.data
 		end
 		if attempt < 4 then
@@ -72,16 +116,15 @@ function ProfileService:mode()
 end
 
 function ProfileService:save(player, release)
+	return self:_locked(player, function()
+		return self:_save(player, release)
+	end) == true
+end
+
+function ProfileService:_save(player, release)
 	local entry = self.entries[player]
 	if not entry then
 		return true
-	end
-	local deadline = os.clock() + 10
-	while entry.busy and os.clock() < deadline do
-		task.wait(0.1)
-	end
-	if entry.busy then
-		return false
 	end
 	if not self.persistent then
 		if release then
@@ -89,7 +132,6 @@ function ProfileService:save(player, release)
 		end
 		return true
 	end
-	entry.busy = true
 	entry.releasing = release
 	local snapshot = Rules.normalize(entry.data)
 	local saved = false
@@ -107,7 +149,6 @@ function ProfileService:save(player, release)
 			task.wait(attempt)
 		end
 	end
-	entry.busy = false
 	entry.releasing = false
 	if saved then
 		entry.unavailable = false

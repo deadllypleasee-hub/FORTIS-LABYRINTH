@@ -118,6 +118,7 @@ local function active(player, expectedRun)
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	return session ~= nil
 		and session.run == expectedRun
+		and character == expectedRun.character
 		and profiles:isAvailable(player)
 		and humanoid ~= nil
 		and RunRules.canAct(session.status, humanoid.Health)
@@ -232,6 +233,10 @@ local function buildRun(player, seed, runId)
 	if not session then
 		return
 	end
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	assert(character and humanoid and humanoid.Health > 0, "A living character is required to enter a floor")
+	session.status = "Loading"
 	closeRun(session)
 	local layout = FloorGenerator.generate(seed, 1)
 	-- Generous spacing keeps separate Studio SOLO runs physically apart.
@@ -244,6 +249,8 @@ local function buildRun(player, seed, runId)
 		geometry = geometry,
 		connections = {},
 		chests = {},
+		character = character,
+		ready = false,
 	}
 	session.run = run
 	local function isActive(candidate)
@@ -331,16 +338,23 @@ local function buildRun(player, seed, runId)
 	if player.Parent ~= Players or sessions[player] ~= session or session.run ~= run then
 		return
 	end
+	if session.status ~= "Loading" or player.Character ~= character or humanoid.Health <= 0 then
+		session.status = "Defeated"
+		notify(
+			player,
+			"Подготовка прервана. Вернитесь в HUB для нового забега."
+		)
+		sendState(player)
+		return
+	end
+	run.ready = true
 	session.status = "Active"
 	moveCharacter(player, geometry.spawnCFrame)
 	local forceField = player.Character and player.Character:FindFirstChildOfClass("ForceField")
 	if forceField then
 		forceField:Destroy()
 	end
-	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-	if humanoid then
-		humanoid.Health = humanoid.MaxHealth
-	end
+	humanoid.Health = humanoid.MaxHealth
 	equipSword(player, run)
 	sendState(player)
 	notify(player, "Этаж 1 · Заброшенные катакомбы")
@@ -387,6 +401,7 @@ local function startRun(player, payload)
 		local ok, err = pcall(buildRun, player, seed)
 		if not ok then
 			warn("[FORTIS] Floor creation failed:", err)
+			moveCharacter(player, lobbyCFrame)
 			closeRun(session)
 			session.status = "Hub"
 			notify(player, "Ошибка создания этажа. Повторите попытку.")
@@ -443,12 +458,17 @@ end
 local function onCharacter(player, character)
 	local humanoid = character:WaitForChild("Humanoid", 10)
 	local root = character:WaitForChild("HumanoidRootPart", 10)
-	if not humanoid or not root then
+	if not humanoid or not root or player.Character ~= character then
 		return
 	end
 	humanoid.Died:Once(function()
 		local session = sessions[player]
-		if session and session.status == "Active" then
+		local run = session and session.run
+		if
+			run
+			and run.character == character
+			and (session.status == "Active" or (session.status == "Loading" and not run.ready))
+		then
 			session.status = "Defeated"
 			local profile = profiles:get(player)
 			if profile then

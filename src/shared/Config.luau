@@ -1,7 +1,7 @@
 --!strict
 -- Set only these two IDs after creating both Places in the SAME Experience.
 return table.freeze({
-	Version = "0.1.0",
+	Version = "0.1.1",
 	HubPlaceId = 0,
 	DungeonPlaceId = 0,
 	EnablePersistence = true, -- Studio always uses session data; published servers use DataStore

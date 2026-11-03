@@ -17,6 +17,14 @@ end
 local HubBuilder = loadBuilder("src/hub/HubBuilder.luau")
 local RoomGenerator = loadBuilder("src/dungeon/RoomGenerator.luau")
 local CorridorGenerator = loadBuilder("src/dungeon/CorridorGenerator.luau")
+local Harness = require("./helpers/ServerHarness")
+local FloorGenerator = require("../src/shared/generation/FloorGenerator")
+local FloorValidator = require("../src/shared/generation/FloorValidator")
+local floorEnvironment = table.clone(environment)
+floorEnvironment.script = { Parent = { RoomGenerator = "rooms", CorridorGenerator = "corridors" } }
+local FloorBuilder = Harness.load("src/dungeon/FloorBuilder.luau", {
+	ReplicatedStorage = { Shared = { generation = { FloorValidator = "validator" } } },
+}, { validator = FloorValidator, rooms = RoomGenerator, corridors = CorridorGenerator }, floorEnvironment)
 local Vector3 = roblox.Vector3
 local Instance = roblox.Instance
 
@@ -47,6 +55,39 @@ local function solids(model)
 end
 
 return function(test)
+	test("scene: actual first-floor builder supports isolated runs and all gameplay spawns", function()
+		local parent = Instance.new("Folder")
+		for seed = 1, 12 do
+			local origin = Vector3.new(3648, 0, 0)
+			local layout = FloorGenerator.generate(seed, 1)
+			local geometry = FloorBuilder.build(layout, parent, origin)
+			assert(geometry.model.Parent == parent)
+			assert(geometry.model.ModelStreamingMode == roblox.Enum.ModelStreamingMode.Atomic)
+			assert(#solids(geometry.model) <= 450, "first-floor part budget exceeded")
+			assert(#geometry.enemySpawns == 1 and #geometry.trapSpawns == 1 and #geometry.chestSpawns == 1)
+			near(geometry.spawnCFrame.Position.X, origin.X)
+			near(geometry.spawnCFrame.Position.Y, 4)
+			local exit = geometry.roomCenters[layout.exitId]
+			near((geometry.exitCFrame.Position - exit).Y, 3)
+			for _, room in layout.rooms do
+				local center = geometry.roomCenters[room.id]
+				near(center.X, origin.X + room.x * 48)
+				near(center.Z, origin.Z + room.z * 48)
+			end
+			geometry.model:Destroy()
+		end
+		parent:Destroy()
+	end)
+
+	test("scene: invalid floor input exposes no partial geometry", function()
+		local parent = Instance.new("Folder")
+		local layout = FloorGenerator.generate(123, 1)
+		layout.rooms[2].x = layout.rooms[1].x
+		layout.rooms[2].z = layout.rooms[1].z
+		assert(not pcall(FloorBuilder.build, layout, parent, Vector3.zero))
+		assert(#parent:GetChildren() == 0)
+		parent:Destroy()
+	end)
 	test("scene: actual HUB creates an anchored mobile-budget plaza with a supported spawn", function()
 		local parent = Instance.new("Folder")
 		local hub = HubBuilder.build(parent)

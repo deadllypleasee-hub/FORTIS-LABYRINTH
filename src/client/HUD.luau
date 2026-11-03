@@ -2,6 +2,7 @@ local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local HUDLayout = require(script.Parent.HUDLayout)
 
 local HUD = {}
 HUD.__index = HUD
@@ -149,6 +150,9 @@ function HUD.new(player, remotes)
 	self:_connect(Workspace:GetPropertyChangedSignal("CurrentCamera"), function()
 		self:_bindCamera()
 	end)
+	self:_connect(self.gui:GetPropertyChangedSignal("AbsoluteSize"), function()
+		self:_resize()
+	end)
 	self:_connect(Workspace.DescendantAdded, function(object)
 		if self.lowQuality then
 			self:_reduceEffect(object)
@@ -168,6 +172,7 @@ end
 
 function HUD:_build()
 	local top = panel(self.root, UDim2.fromOffset(16, 12), UDim2.new(1, -32, 0, 130))
+	self.top = top
 	label(top, "FORTIS / LABYRINTH", UDim2.fromOffset(16, 10), UDim2.new(0.65, 0, 0, 25), 19, palette.gold)
 	self.floor = label(top, "HUB", UDim2.new(0.68, 0, 0, 11), UDim2.new(0.32, -16, 0, 24), 16)
 	self.floor.TextXAlignment = Enum.TextXAlignment.Right
@@ -180,6 +185,7 @@ function HUD:_build()
 		BackgroundColor3 = palette.panel,
 		ClipsDescendants = true,
 	}, top)
+	self.healthTrack = healthTrack
 	round(healthTrack, 4)
 	self.healthFill = instance("Frame", {
 		Size = UDim2.fromScale(1, 1),
@@ -204,11 +210,12 @@ function HUD:_build()
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, -16, 0, 154),
-		Size = UDim2.fromOffset(292, 40),
+		Size = UDim2.fromOffset(292, 64),
 	}, self.root)
-	local mapButton = button(menu, "КАРТА", UDim2.fromOffset(0, 0), UDim2.fromOffset(84, 40))
-	local inventoryButton = button(menu, "ВЕЩИ", UDim2.fromOffset(92, 0), UDim2.fromOffset(84, 40))
-	local settingsButton = button(menu, "ОПЦИИ", UDim2.fromOffset(184, 0), UDim2.fromOffset(108, 40))
+	self.menu = menu
+	local mapButton = button(menu, "КАРТА", UDim2.fromOffset(0, 0), UDim2.fromOffset(84, 64))
+	local inventoryButton = button(menu, "ВЕЩИ", UDim2.fromOffset(92, 0), UDim2.fromOffset(84, 64))
+	local settingsButton = button(menu, "ОПЦИИ", UDim2.fromOffset(184, 0), UDim2.fromOffset(108, 64))
 	self:_connect(mapButton.Activated, function()
 		self:_open("map")
 	end)
@@ -257,7 +264,7 @@ function HUD:_build()
 	)
 	self.hint.TextXAlignment = Enum.TextXAlignment.Center
 
-	self.notice = panel(self.root, UDim2.new(0.5, -206, 0, 204), UDim2.fromOffset(412, 64))
+	self.notice = panel(self.root, UDim2.new(0.5, -206, 0, 230), UDim2.fromOffset(412, 64))
 	self.notice.Visible = false
 	self.notice.ZIndex = 30
 	self.noticeText = label(self.notice, "", UDim2.fromOffset(14, 8), UDim2.new(1, -28, 1, -16), 15)
@@ -270,13 +277,13 @@ function HUD:_build()
 	self.modal.ZIndex = 20
 	self.modalTitle = label(self.modal, "", UDim2.fromOffset(20, 14), UDim2.new(1, -88, 0, 30), 19, palette.gold)
 	self.modalTitle.ZIndex = 21
-	local close = button(self.modal, "×", UDim2.new(1, -54, 0, 12), UDim2.fromOffset(40, 36))
+	local close = button(self.modal, "×", UDim2.new(1, -70, 0, 4), UDim2.fromOffset(64, 64))
 	close.ZIndex = 22
 	self:_connect(close.Activated, function()
 		self.modal.Visible = false
 	end)
 	self.modalContent = instance("Frame", {
-		Position = UDim2.fromOffset(20, 60),
+		Position = UDim2.fromOffset(20, 72),
 		Size = UDim2.new(1, -40, 1, -80),
 		BackgroundTransparency = 1,
 		ZIndex = 21,
@@ -352,14 +359,33 @@ function HUD:_bindCamera()
 	if not camera then
 		return
 	end
-	local function resize()
-		local viewport = camera.ViewportSize
-		local scale = math.clamp(math.min(viewport.X / 700, viewport.Y / 560), 0.78, 1.1)
-		self.scale.Scale = scale
-		self.root.Size = UDim2.fromScale(1 / scale, 1 / scale)
+	self.cameraConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+		self:_resize()
+	end)
+	self:_resize()
+end
+
+function HUD:_resize()
+	local size = self.gui.AbsoluteSize
+	if size.X <= 0 or size.Y <= 0 then
+		return
 	end
-	self.cameraConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(resize)
-	resize()
+	local layout = HUDLayout.calculate(size.X, size.Y)
+	self.scale.Scale = layout.scale
+	self.root.Size = UDim2.fromScale(1 / layout.scale, 1 / layout.scale)
+	self.top.Size = UDim2.new(1, -32, 0, layout.topHeight)
+	self.healthText.Position = UDim2.fromOffset(16, if layout.compact then 34 else 39)
+	self.healthTrack.Position = UDim2.fromOffset(16, if layout.compact then 59 else 65)
+	self.coins.Position = UDim2.new(0.5, 0, 0, if layout.compact then 34 else 43)
+	self.objective.Position = UDim2.fromOffset(16, if layout.compact then 72 else 86)
+	self.objective.Size = UDim2.new(1, -32, 0, if layout.compact then 22 else 32)
+	self.objective.TextSize = if layout.compact then 12 else 14
+	self.menu.AnchorPoint = Vector2.new(if layout.compact then 0 else 1, 0)
+	self.menu.Position = UDim2.new(if layout.compact then 0 else 1, if layout.compact then 16 else -16, 0, layout.menuY)
+	self.attack.Position = UDim2.new(1, -112, 0, layout.attackY)
+	self.potion.Position = UDim2.new(1, -196, 0, layout.potionY)
+	-- Transient notices stay central; the action buttons remain available at right.
+	self.notice.Position = if layout.compact then UDim2.new(0.5, -206, 1, -76) else UDim2.new(0.5, -206, 0, 230)
 end
 
 function HUD:_render()
